@@ -1,0 +1,676 @@
+This is configuration for {{ switch.hostname }} with MGMT loopback IP {{ switch.loopback }} & hardware model C9500-48Y4C-A
+! Copy the IOS file to flash: then follow the below steps
+!
+install add file flash:cat9k_iosxe.17.06.05.SPA.bin activate commit
+!
+write erase
+reload
+!!!Register License
+ip host tools.cisco.com 173.37.145.8 72.163.4.38
+ip host smartreceiver.cisco.com 72.163.15.137 173.36.127.32 192.133.220.120
+license smart transport smart
+license smart url default
+Do show run | i trustpoint TP-self-signed
+ip http client secure-trustpoint TP-self-signed-[TRUSTPOINT]
+exit
+!
+license smart trust idtoken [Enter Token here] local force
+wr
+!
+!!!! Configure Loopback
+interface Loopback1
+ description ITSM: {{switch.site_id}} - MGMT Interface
+ ip address {{switch.loopback}} 255.255.255.255
+!
+!
+ip tacacs source-interface loopback1
+logging source-interface loopback1
+ntp source loopback 1
+!
+{% if 'RS001' in switch.hostname %}!Only on PRIMARY L3 Switches
+spanning-tree vlan 1-4094 priority 8192
+!
+{% else %}!Only on SECONDARY L3 Switches
+spanning-tree vlan 1-4094 priority 16384
+!
+{% endif %}
+standby bfd all-interfaces
+!
+!-Basic Common Configs
+!
+hostname {{switch.hostname}}
+!
+password encryption aes
+key config-key password-encrypt $!
+!--- $!: Same password used for "enable secret" command!
+!
+username kvadmin privilege 15 secret #
+!
+enable secret $!
+!
+lldp run
+!
+udld enable
+!
+errdisable recovery cause all
+errdisable recovery interval 28800
+!
+diagnostic bootup level complete
+!
+ip routing
+vtp domain {{switch.vtpdomain}}
+vtp version 3
+vtp mode transparent
+!
+!
+!!!!STP and vlan Configuration
+!
+spanning-tree mode rapid-pvst
+spanning-tree backbonefast
+spanning-tree portfast edge default
+spanning-tree portfast edge bpduguard default
+!
+{% for vlan in vlans %}
+vlan {{ vlan.vlan_id }}
+name {{ vlan.name }}
+!
+{% endfor %}
+!
+ip ftp source-interface Loopback1
+ip tftp source-interface Loopback1
+!
+ip dhcp snooping vlan 1-4094
+no ip dhcp snooping information option
+ip dhcp snooping
+!
+!
+device-tracking tracking auto-source
+device-tracking policy DT_trunk_policy
+ trusted-port
+ device-role switch
+!
+!!!!DNS, NTP & Logging Configuration
+!
+system mtu 9192
+!
+mac address-table notification mac-move
+mac address-table aging-time 14700
+!
+!
+service password-encryption
+service sequence-numbers
+service timestamps log datetime msec show-timezone
+!
+archive
+ log config
+  logging enable
+  hidekeys
+ permit ip any any
+! 
+no service finger
+no service pad
+no service tcp-small-servers
+no service udp-small-servers
+!
+no ip forward-protocol udp tftp
+no ip forward-protocol udp domain
+no ip forward-protocol udp time
+no ip forward-protocol udp netbios-ns
+no ip forward-protocol udp netbios-dgm
+no ip forward-protocol udp tacacs
+!
+no ip source-route
+no ip bootp server
+no ip finger
+no ip http server
+no ip http secure-server
+!
+no ip domain lookup
+ip domain name net.kenvue.com
+ip name-server 10.255.255.230
+ip name-server 10.255.255.250
+!
+clock timezone GMT 0
+ntp source Loopback1
+ntp update-calendar
+ntp server 10.255.255.230 prefer
+ntp server 10.255.255.250
+!
+! Logging Configuration
+no logging console
+logging buffered 100000 informational
+logging trap notifications
+! 
+logging source-interface Loopback1
+logging host 10.79.62.202
+logging host 10.225.62.200
+!
+!
+ip access-list extended VIRUSFILTER
+ deny ip host 127.0.0.1 any
+ permit ip any any
+! 
+!
+!!!!QoS Configuration
+class-map match-any Real-Time
+  match ip dscp ef
+!
+class-map match-any Critical
+  match ip dscp cs7 
+  match ip dscp cs6 
+  match ip dscp cs5 
+  match ip dscp cs3 
+  match ip dscp af31 
+  match ip dscp af32 
+  match ip dscp af33 
+  match ip dscp 63
+!
+class-map match-any Video
+  match ip dscp cs4 
+  match ip dscp af41 
+  match ip dscp af42 
+  match ip dscp af43
+!
+policy-map output-q
+ class Real-Time
+    priority level 1
+ class Video
+    bandwidth remaining percent 15
+ class Critical
+    bandwidth remaining percent 40
+ class class-default
+    bandwidth remaining percent 45
+!
+!
+!-SSH
+crypto key generate rsa general-keys modulus 2048
+ip ssh time-out 60
+ip ssh authentication-retries 2
+ip ssh version 2
+!
+!-Banner
+no banner motd
+banner motd #
+********************************* WARNING ****************************************
+WARNING NOTICE: This is a private system. The actual or attempted, unauthorized access, use or
+modification of this system is strictly prohibited. Individuals undertaking such unauthorized access,
+use or modification are subject to company disciplinary proceedings and/or criminal and civil penalties
+under applicable domestic and foreign laws. The use of this system may be monitored and recorded for
+administrative and security reasons in accordance with local law. If such monitoring and/or recording
+reveal possible evidence of criminal activity, the results of such monitoring may be provided to law
+enforcement officials. Continued use of this system after receipt of this notice constitutes consent to
+such security monitoring and recording.
+********************************* WARNING ****************************************
+#
+!
+no banner exec
+banner exec #
+WARNING NOTICE: This is a private system for use by Kenvue and its affiliates.
+If you are not an authorized user of this system disconnect immediately.
+#
+!-Console and VTY Ports
+line con 0
+ password $
+!
+ login local
+ exec-timeout 5 0
+!
+line vty 0 4
+ password $!
+ login local
+ exec-timeout 5 0
+ transport input SSH
+!
+line vty 5 15
+ no login
+ transport input none
+!
+!-TACACS
+aaa new-model
+
+ip tacacs source-interface Loopback1
+!
+! 
+tacacs server KENVUE-TACACS-1
+ address ipv4 10.225.46.10
+ key 
+ timeout 10
+tacacs server KENVUE-TACACS-2
+ address ipv4 10.185.46.10
+ key 
+ timeout 10
+tacacs server KENVUE-TACACS-3
+ address ipv4 10.79.46.10
+ key 
+ timeout 10
+!
+! 
+aaa authentication login default group tacacs+ local
+aaa authorization exec default group tacacs+ if-authenticated 
+aaa authorization commands 1 default group tacacs+ 
+aaa authorization commands 15 default group tacacs+ none 
+aaa accounting commands 15 default stop-only group tacacs+
+aaa session-id common
+!
+!
+!!!!ICN SVI, Port-Channel and Interfaces
+!-Unused Ports: 
+interface GigabitEthernet0/0
+ no ip address
+ shutdown
+exit
+!
+interface Null0
+ no ip unreachables
+ exit
+!
+interface range TwentyFiveGigE1/0/1-48
+ description ** not used **
+ service-policy output output-q
+ shutdown
+!
+interface range Hu1/0/49-52
+ description ** not used **
+ service-policy output output-q
+ shutdown
+!
+interface vlan 1
+ description ** not used **
+ shutdown
+
+!!!!Configure Partner switch connection
+
+interface Port-channel1
+ description ICN-{% if 'RS001' in switch.hostname %}RS002{%else%}RS001{%endif%}_Tw1/0/1_Tw1/0/2
+ switchport
+ switchport mode trunk
+ spanning-tree guard loop
+ load-interval 30
+ no shutdown
+ ip dhcp snooping trust
+ service-policy output output-q
+!
+interface Tw1/0/1
+description ICN-{% if 'RS001' in switch.hostname %}RS002{%else%}RS001{%endif%}_Tw1/0/1
+ switchport
+ switchport mode trunk
+ load-interval 30
+ service-policy output output-q
+ channel-group 1 mode active
+ ip dhcp snooping trust
+ no shutdown
+!
+interface Tw1/0/2
+description ICN-{% if 'RS001' in switch.hostname %}RS002{%else%}RS001{%endif%}_Tw1/0/2
+ switchport
+ switchport mode trunk
+ load-interval 30
+ service-policy output output-q
+ channel-group 1 mode active
+ ip dhcp snooping trust
+ no shutdown
+!
+!!!!L2 Downlinks
+!{% for cable in cables %}{% if 'SW0' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Downlink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ switchport
+ switchport mode trunk
+ switchport trunk allowed vlan {% for vlan in vlans %}{% if vlan.vlan_id | int > 50 and (vlan.floor == cable.destination_floor or vlan.floor == 'all') %}{{ vlan.vlan_id }},{% endif %}{% endfor %}
+ device-tracking attach-policy DT_trunk_policy 
+ ip dhcp snooping trust
+ service-policy output output-q
+ no shutdown
+!{% endif %}{% endfor %}
+
+!3.3) L3 Uplinks or Downlinks
+
+!To SDWAN Routers
+!{% for cable in cables %}{% if 'RR601' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Uplink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ no switchport
+ ip address {{ switch.ip_rr601 }} 255.255.255.254
+ no ip redirects
+ load-interval 30
+ bfd interval 999 min_rx 999 multiplier 3
+ service-policy output output-q
+ no shutdown
+!{% endif %}{% endfor %}
+{% for cable in cables %}{% if 'RR602' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Uplink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ no switchport
+ ip address {{ switch.ip_rr602 }} 255.255.255.254
+ no ip redirects
+ load-interval 30
+ bfd interval 999 min_rx 999 multiplier 3
+ service-policy output output-q
+ no shutdown
+!{% endif %}{% endfor %}
+
+
+!To LAN Server switches {% if switch.icn_sv001_ip != '' %}
+!{% for cable in cables %}{% if 'SV001' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Downlink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ no switchport
+ ip address {{switch.icn_sv001_ip}} 255.255.255.254
+ load-interval 30
+ service-policy output output-q
+ no ip redirects
+ bfd interval 999 min_rx 999 multiplier 3
+ ip mtu 1500
+ no shutdown
+!{% endif %}{% endfor %}{% endif %}
+!{% if switch.icn_sv002_ip != '' %}{% for cable in cables %}{% if 'SV002' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Downlink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ no switchport
+ ip address {{switch.icn_sv002_ip}} 255.255.255.254
+ load-interval 30
+ service-policy output output-q
+ no ip redirects
+ bfd interval 999 min_rx 999 multiplier 3
+ ip mtu 1500
+ no shutdown
+!{% endif %}{% endfor %}{% endif %}
+
+! Configure Interface to Firewall
+{% for vlan in vlans %}{% if vlan.vlan_id == 10 %}
+interface vlan 10
+ description {{ vlan.name }}
+ ip address {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_pri}} {% else %}{{vlan.vlan_ip_sec}} {% endif %}{{vlan.mask}}
+ standby version 2
+ standby {{vlan.vlan_id}} ip {{vlan.hsrp_vip}}
+ standby {{vlan.vlan_id}} priority {% if 'RS001' in switch.hostname %}110{% else %}105{% endif %}
+ standby {{vlan.vlan_id}} preempt
+ standby {{vlan.vlan_id}} preempt delay minimum 30 reload 60
+ standby bfd
+ bfd interval 999 min_rx 999 multiplier 3
+ no ip redirects
+ no shutdown
+!{% endif %}{% endfor %}
+
+!{% for cable in cables %}{% if 'FW00' in cable.destination_device %}
+interface {{ cable.source_port }}
+ description Downlink_{{ cable.destination_device }}_{{ cable.destination_port }}
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast edge
+ spanning-tree guard root
+ service-policy output output-q
+ no shutdown
+!{% endif %}{% endfor %}
+! Configure Interface to WLC
+!
+!- ACL Configuration
+ip access-list extended KVGUEST
+ permit udp any any eq bootps
+ permit udp any any eq domain
+ permit udp any any eq 3784 3785
+
+ !-PING FEDERATE SERVERS  INTERIM PSN Servers{% for vlan in vlans %}{% if '319' in vlan.vlan_id %}
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.36.5.185 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.130.11.24 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.203.232.160 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.79.17.153 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.79.5.32 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.185.17.91 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.185.17.236 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.225.8.239 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.225.8.156 eq 443
+
+ !- JJGUEST PSN Servers
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.38.93.95 eq 8443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.166.44.234 eq 8443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.203.201.175 eq 8443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.38.92.132 eq 8443
+
+ !- KENVUE GUEST PSN Servers
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.185.52.135 0.0.0.0 range 8443 8444
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.185.52.199 0.0.0.0 range 8443 8444
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.79.52.135 0.0.0.0 range 8443 8444
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.79.52.199 0.0.0.0 range 8443 8444
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.225.52.135 0.0.0.0 range 8443 8444
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} 10.225.52.199 0.0.0.0 range 8443 8444
+
+!-KENVUE GUEST SPONSOR PAGE.  SPONSOR VIPs ARE THE SAME VIP ON THE VARIABLE PAGE
+!- FOUND AT:   https://confluence.jnj.com/display/AAVU/Regional+Variable+Reference+Data#RegionalVariableReferenceData-JJINTERNETWirelessRadiusServers
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.225.46.13 eq 80
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.225.46.13 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.225.46.13 eq 8445
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.185.46.13 eq 80
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.185.46.13 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.185.46.13 eq 8445
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.79.46.13 eq 80
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.79.46.13 eq 443
+ permit tcp {{vlan.net_add}} {{vlan.wildcard}} host 10.79.46.13 eq 8445
+
+!-ISRM SCANNING SERVERS
+permit ip {{vlan.net_add}} {{vlan.wildcard}} host 10.38.32.69
+permit ip {{vlan.net_add}} {{vlan.wildcard}} host 10.38.32.70
+deny ip any 10.0.0.0 0.255.255.255
+deny ip any 172.16.0.0 0.15.255.255
+deny ip any 192.168.0.0 0.0.255.255
+permit ip any any
+exit{% endif %}{% endfor %}
+!
+vlan 319
+interface VLAN319
+ ip access-group KVGUEST in
+!
+!
+!!!!SVI Configurations for DISTRO/SERVER/CORE Switches
+!{% for vlan in vlans %}{% if vlan.vlan_id == '2' %}
+interface vlan 2
+ description ICN-{{vlan.network}}-RS001-TO-RS002
+ ip address {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_pri}}{% else %}{{vlan.vlan_ip_sec}}{% endif %} {{vlan.mask}}
+ load-interval 30
+ no ip redirects
+ bfd interval 999 min_rx 999 multiplier 3
+ no shutdown{% endif %}{% endfor %}
+!
+
+{% for vlan in vlans %}{% if vlan.vlan_id | int > 40 %}
+interface vlan {{vlan.vlan_id}}
+ description {{vlan.name}}
+ ip address {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_pri}} {% else %}{{vlan.vlan_ip_sec}} {% endif %}{{vlan.mask}}
+ standby version 2
+ standby {{vlan.vlan_id}} ip {{vlan.hsrp_vip}}
+ standby {{vlan.vlan_id}} priority {% if 'RS001' in switch.hostname %}110{% else %}105{% endif %}
+ standby {{vlan.vlan_id}} preempt
+ standby {{vlan.vlan_id}} preempt delay minimum 30 reload 60
+ standby bfd
+ bfd interval 999 min_rx 999 multiplier 3{%for value in switch.dhcp_helper %}
+ ip helper-address {{ value }}{% endfor %}
+ no ip redirects
+ no shutdown
+!{% endif %}{% endfor %}
+!!!!Routing
+!
+!!!!CORE Base BGP Configurations
+!! BGP on the switches should use 4-Byte ASN. More information about it on the "4B ASN" tab
+!
+ip bgp-community new-format
+!
+!!SDWAN BGP Configurations
+!
+ip prefix-list DENY-TO-WAN seq 10 permit 0.0.0.0/0 le 15
+ip prefix-list DENY-TO-WAN seq 20 permit 10.255.255.0/24 le 32
+!
+!!!! EIGRP Additional Configurations for SDWAN
+ip prefix-list SUMMARY-ADDRESS seq 5 permit 0.0.0.0/0
+ip prefix-list SUMMARY-ADDRESS seq 10 permit 10.0.0.0/10
+ip prefix-list SUMMARY-ADDRESS seq 15 permit 10.64.0.0/11
+ip prefix-list SUMMARY-ADDRESS seq 20 permit 10.96.0.0/11
+ip prefix-list SUMMARY-ADDRESS seq 25 permit 10.128.0.0/10
+ip prefix-list SUMMARY-ADDRESS seq 30 permit 10.192.0.0/11
+ip prefix-list SUMMARY-ADDRESS seq 35 permit 10.224.0.0/11 le 32
+ip prefix-list SUMMARY-ADDRESS seq 40 permit 172.16.0.0/12 le 32
+ip prefix-list SUMMARY-ADDRESS seq 45 permit 148.177.0.0/16 le 32
+ip prefix-list SUMMARY-ADDRESS seq 50 permit 199.65.0.0/16 le 32
+ip prefix-list SUMMARY-ADDRESS seq 1000 deny 0.0.0.0/0 le 32
+!
+!
+route-map CORE-WAN-OUT deny 10 
+ description Blocks default and prefixes LE 15
+ match ip address prefix-list DENY-TO-WAN
+!
+route-map CORE-WAN-OUT permit 500 
+ description Allows everything
+!
+route-map CORE-WAN-1-IN permit 500 
+ description Allows everything LP {% if 'RS001' in switch.hostname %}120{% else %}110{% endif %}
+ set local-preference {% if 'RS001' in switch.hostname %}120{% else %}110{% endif %}
+!
+route-map CORE-WAN-2-IN permit 500 
+ description Allows everything LP {% if 'RS001' in switch.hostname %}140{% else %}130{% endif %}
+ set local-preference {% if 'RS001' in switch.hostname %}140{% else %}130{% endif %}
+!
+route-map BGP-TO-EIGRP permit 10
+ description Allow only KV Summaries
+ match ip address prefix-list SUMMARY-ADDRESS
+ set tag {% if 'RS001' in switch.hostname %}1{{switch.site_id}}{% else %}2{{switch.site_id}}{% endif %}
+!
+route-map BGP-TO-EIGRP deny 500
+ description Deny everything else
+!
+route-map EIGRP-TO-BGP deny 10
+ description Redistribution loop prevention
+ match tag 1{{switch.site_id}} 2{{switch.site_id}}
+!
+route-map EIGRP-TO-BGP permit 500
+ description Allows everything
+!
+!
+router eigrp 20
+ metric maximum-hops 25
+ network 10.0.0.0
+ passive-interface default
+ no passive-interface Vlan2
+ {% for cable in cables %}{% if switch.icn_sv001_ip != '' %}{% if switch.hostname == cable.source_device and 'SV001' in cable.destination_device %} no passive-interface {{ cable.source_port }}{% endif %}{% endif %}{% if switch.icn_sv002_ip != '' %}{% if switch.hostname == cable.source_device and 'SV002' in cable.destination_device %} no passive-interface {{ cable.source_port }}{% endif %}{% endif %}{% endfor %} eigrp router-id {{ switch.loopback }}
+ no auto-summary
+!
+!!{% for vlan in vlans %}{% if vlan.vlan_id == '2' %}
+router bgp 422100{{switch.site_id}}
+ bgp router-id {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_pri}}{% else %}{{vlan.vlan_ip_sec}}{% endif %} {% endif %}{% endfor %}
+ bgp log-neighbor-changes
+ bgp deterministic-med
+ !
+ template peer-policy KV-EBGP-POLICY
+  send-community
+  soft-reconfiguration inbound
+ exit-peer-policy
+ !
+ template peer-session KV-EBGP-SESSION
+  description eBGP Peer
+  timers 3 9
+  fall-over bfd
+  password 7 
+ exit-peer-session
+ !
+ template peer-policy KV-IBGP-POLICY
+  next-hop-self
+  soft-reconfiguration inbound
+  send-community
+ exit-peer-policy
+!
+ template peer-session KV-IBGP-SESSION
+  description CORE-iBGP
+  remote-as 422100{{switch.site_id}}
+  fall-over bfd
+ exit-peer-session
+ !iBGP Peer
+ !{% for vlan in vlans %}{% if vlan.vlan_id == '2' %}
+ neighbor {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_sec}}{% else %}{{vlan.vlan_ip_pri}}{% endif %} inherit peer-session KV-IBGP-SESSION
+ neighbor {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_sec}}{% else %}{{vlan.vlan_ip_pri}}{% endif %} description IBGP-{% if 'RS001' in switch.hostname %}RS002{% else %}RS001{% endif %}
+ !
+ address-family ipv4
+ neighbor {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_sec}}{% else %}{{vlan.vlan_ip_pri}}{% endif %} inherit peer-policy KV-IBGP-POLICY
+ neighbor {% if 'RS001' in switch.hostname %}{{vlan.vlan_ip_sec}}{% else %}{{vlan.vlan_ip_pri}}{% endif %} activate
+ !{%endif%} {%endfor%}
+!eBGP Peer
+ neighbor {{switch.bgp_rr601}} remote-as 422000{{switch.site_id}}
+ neighbor {{switch.bgp_rr601}} description EBGP-{{switch.site_id}}RR601
+ neighbor {{switch.bgp_rr601}} inherit peer-session KV-EBGP-SESSION
+!
+ neighbor {{switch.bgp_rr602}} remote-as 422000{{switch.site_id}}
+ neighbor {{switch.bgp_rr602}} description EBGP-{{switch.site_id}}RR602
+ neighbor {{switch.bgp_rr602}} inherit peer-session KV-EBGP-SESSION
+ !
+ address-family ipv4
+ neighbor {{switch.bgp_rr601}} inherit peer-policy KV-EBGP-POLICY
+ neighbor {{switch.bgp_rr601}} route-map CORE-WAN-OUT out
+ neighbor {{switch.bgp_rr601}} route-map CORE-WAN-1-IN in
+!
+ neighbor {{switch.bgp_rr602}} inherit peer-policy KV-EBGP-POLICY
+ neighbor {{switch.bgp_rr602}} route-map CORE-WAN-OUT out
+ neighbor {{switch.bgp_rr602}} route-map CORE-WAN-2-IN in
+!
+ redistribute eigrp 20 route-map EIGRP-TO-BGP
+exit-address-family
+ !
+maximum-paths 4
+redistribute connected
+ !
+!Redistribution
+router eigrp 20
+redistribute bgp 422100{{switch.site_id}} metric 100000 1 255 1 1500 route-map BGP-TO-EIGRP
+!
+ !
+!-Static
+
+
+!-SNMP
+!
+!
+ip access-list standard SNMP-RO-ACL  
+ remark NCHC NA Tools
+ permit 10.79.62.0 0.0.0.255
+ remark NCHC EMEA Tools
+ permit 10.185.62.0 0.0.0.255
+ remark NCHC ASPAC Tools
+ permit 10.225.62.0 0.0.0.255  
+ remark NCHC DNAC-NA
+ permit 10.63.7.0 0.0.0.31
+ remark NCHC DNAC-EU
+ permit 10.149.7.0 0.0.0.31  
+ remark NCHC DNAC-AP
+ permit 10.199.135.0 0.0.0.31
+ remark Netscout Collectors
+ permit 10.79.4.50 0.0.0.0
+ permit 10.79.4.51 0.0.0.0
+ permit 10.79.4.151 0.0.0.0
+ permit 10.185.4.51 0.0.0.0
+ permit 10.185.4.151 0.0.0.0
+ permit 10.225.4.51 0.0.0.0
+ permit 10.225.4.151 0.0.0.0
+ remark For Magellan Servers
+ permit 10.79.23.0 0.0.0.255
+ permit 10.79.153.0 0.0.0.255
+ permit 10.185.18.0 0.0.0.255
+ permit 10.185.152.0 0.0.0.255
+ permit 10.225.5.0 0.0.0.255
+ permit 10.225.152.0 0.0.0.255
+!
+ip access-list extended VIRUSFILTER
+ deny ip host 127.0.0.1 any
+ permit ip any any
+!
+snmp-server ifindex persist
+no snmp-server community public
+no snmp-server community private
+snmp-server community 7ool54TM0n RO SNMP-RO-ACL
+snmp-server contact Kenvue NOC
+snmp-server location {{ switch.snmp_location }}
+!
+!
+!-Other
+!
+mac-address-table aging-time 14400
+!
+!-END
+end
+write mem
+#}

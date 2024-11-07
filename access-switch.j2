@@ -1,0 +1,394 @@
+This is configuration for {{ switch.hostname }} with MGMT Vlan{{ switch.mgmt_vlan }} & IP {{switch.mgmt_ip}} & hardware model C9300-48UXM-A
+! Copy the IOS file to flash: then follow the below steps
+!
+install add file flash:cat9k_iosxe.17.06.05.SPA.bin activate commit
+!
+write erase
+reload
+!!!Register License
+ip host tools.cisco.com 173.37.145.8 72.163.4.38
+ip host smartreceiver.cisco.com 72.163.15.137 173.36.127.32 192.133.220.120
+license smart transport smart
+license smart url default
+Do show run | i trustpoint TP-self-signed
+ip http client secure-trustpoint TP-self-signed-[TRUSTPOINT]
+exit
+!
+license smart trust idtoken [Enter Token here] local force
+wr
+!
+!!!!-Basic Common Configs
+!
+password encryption aes
+key config-key password-encrypt $!
+!--- $!: Same password used for "enable secret" command!
+!
+username kvadmin privilege 15 secret #
+!
+enable secret $!
+!
+!
+hostname {{switch.hostname}}
+vtp domain {{switch.vtpdomain}}
+vtp version 3
+vtp mode transparent
+!
+!
+system mtu 9192
+!
+interface Null0
+ no ip unreachables
+ exit
+!
+service password-encryption
+diagnostic bootup level complete
+!
+no ip http secure-server
+ip subnet-zero
+no ip domain lookup
+no service dhcp
+no ip bootp server
+!
+ip classless
+ip routing
+!
+ip access-list extended VIRUSFILTER
+ deny ip host 127.0.0.1 any
+ permit ip any any
+! 
+!
+no mac address-table notification mac-move
+mac address-table aging-time 14700
+!
+spanning-tree mode rapid-pvst
+spanning-tree loopguard default
+spanning-tree portfast bpduguard default
+spanning-tree portfast default
+!
+udld enable
+!
+errdisable recovery cause all
+errdisable recovery interval 28800
+!
+lldp run
+!
+ip ftp source-interface vlan {{ switch.mgmt_vlan }}
+ip tftp source-interface vlan {{ switch.mgmt_vlan }}
+!
+ip dhcp snooping vlan 1-4094
+no ip dhcp snooping information option
+ip dhcp snooping
+!
+device-sensor filter-list cdp list cdp-list
+ tlv name device-name
+ tlv name platform-type
+!
+device-sensor filter-list dhcp list dhcp-list
+ option name host-name
+ option name parameter-request-list
+ option name class-identifier
+ option name user-class-id
+!
+device-sensor filter-list lldp list lldp-list
+ tlv name system-name
+ tlv name system-description
+device-sensor filter-spec dhcp include list dhcp-list
+device-sensor filter-spec lldp include list lldp-list
+device-sensor filter-spec cdp include list cdp-list
+!
+!
+device-tracking tracking auto-source
+device-tracking policy DT_trunk_policy
+ trusted-port
+ device-role switch
+! no protocol udp
+! (This command "no protocol udp" will be added by default, don’t touch it.)
+!
+!!!!QoS
+class-map match-any Real-Time
+  match ip dscp ef
+class-map match-any Critical
+  match ip dscp cs7 
+  match ip dscp cs6 
+  match ip dscp cs5 
+  match ip dscp cs3 
+  match ip dscp af31 
+  match ip dscp af32 
+  match ip dscp af33 
+  match ip dscp 63
+!
+class-map match-any Video
+  match ip dscp cs4 
+  match ip dscp af41 
+  match ip dscp af42 
+  match ip dscp af43
+!
+policy-map output-q
+ class Real-Time
+    priority level 1
+ class Video
+    bandwidth remaining percent 15
+ class Critical
+    bandwidth remaining percent 40
+ class class-default
+    bandwidth remaining percent 45
+!
+!!!!VLAN Configuration
+!{% for vlan in vlans %}{% if vlan.vlan_id | int > 50 %}
+{%  if switch.floor in vlan.floor or vlan.floor == 'all' %}
+vlan {{ vlan.vlan_id }}
+name {{ vlan.name }}
+!{%  endif %}{%  endif %}{% endfor %}
+!
+!!!!Shut all ports and unshut only what is needed
+interface Ap1/0/1
+ description *** not used ***
+ shutdown
+!
+interface range  Te1/1/1-8
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+interface range fortyGigabitEthernet1/1/1-2
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+interface vlan 1
+ description *** not used ***
+ shutdown
+!
+interface range  Gi1/1/1-4
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+interface range tw1/0/1-36
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+interface range ten1/0/37-48
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+interface range Twe1/1/1-2
+ description *** not used ***
+ service-policy output output-q
+ shutdown
+!
+!!!!Uplinks to Core Switches
+
+!-For non-MLAG or Stackwise Virtual Uplinks, use below
+!-Make sure "trunk mode" is enabled on the Core connected Interface
+!
+interface {{switch.uplink_to_rs001}}
+ description {{switch.uplink_rs001_desc}}
+ switchport trunk allowed vlan {% for vlan in vlans %}{% if vlan.vlan_id | int > 50 %}{% if switch.floor in vlan.floor.split(',') or vlan.floor == 'all' %}{{ vlan.vlan_id }},{%  endif %}{%  endif %}{% endfor %}
+ switchport mode trunk
+ switchport nonegotiate
+ device-tracking attach-policy DT_trunk_policy 
+ ip dhcp snooping trust
+ no shut
+!
+interface {{switch.uplink_to_rs002}}
+ description {{switch.uplink_rs002_desc}}
+ switchport trunk allowed vlan {% for vlan in vlans %}{% if vlan.vlan_id | int > 50 %}{% if switch.floor in vlan.floor.split(',') or vlan.floor == 'all' %}{{ vlan.vlan_id }},{%  endif %}{%  endif %}{% endfor %}
+ switchport mode trunk
+ switchport nonegotiate
+ device-tracking attach-policy DT_trunk_policy 
+ ip dhcp snooping trust
+ no shut
+!
+!!!!User Ports
+!
+interface range tw 1/0/1-36
+ description User Port
+ switchport mode access
+ switchport access vlan {{ switch.mgmt_vlan }}
+ switchport voice vlan {{ switch.voice_vlan }}
+ no snmp trap link-status
+ no logging event link-status
+ no logging event power-inline-status
+ spanning-tree portfast
+ no shut
+!
+!
+interface range ten 1/0/37-40
+ description User Port
+ switchport mode access
+ switchport access vlan {{ switch.mgmt_vlan }}
+ switchport voice vlan {{ switch.voice_vlan }}
+ no snmp trap link-status
+ no logging event link-status
+ no logging event power-inline-status
+ spanning-tree portfast
+ no shut
+!
+!!!!Access Point Ports
+!
+interface range TenGigabitEthernet 1/0/41-48
+ description AP Ports
+ switchport trunk native vlan 399
+ switchport trunk allowed vlan 300-399
+ switchport mode trunk
+ spanning-tree portfast trunk
+ logging event link-status
+ logging event power-inline-status
+ no snmp trap link-status
+!
+!!!!SVI Template
+interface Vlan {{ switch.mgmt_vlan }}
+ description {{ switch.mgmt_vlan_desc}}
+ ip address {{switch.mgmt_ip}} {{switch.mgmt_ip_mask}}
+ no shut
+!
+
+!!!!Routing
+ip route 0.0.0.0 0.0.0.0 {{switch.def_gateway}}
+
+!!!!DNS
+ip domain name net.kenvue.com
+ip name-server 10.255.255.230
+ip name-server 10.255.255.250
+
+!!!!SSH
+crypto key generate rsa general-keys modulus 2048
+ip ssh time-out 60
+ip ssh authentication-retries 2
+ip ssh version 2
+!
+
+!!!!Logging Format
+service sequence-numbers
+service timestamps log datetime msec show-timezone
+
+!!!!Banner
+no banner motd
+banner motd #
+********************************* WARNING ****************************************
+WARNING NOTICE: This is a private system. The actual or attempted, unauthorized access, use or
+modification of this system is strictly prohibited. Individuals undertaking such unauthorized access,
+use or modification are subject to company disciplinary proceedings and/or criminal and civil penalties
+under applicable domestic and foreign laws. The use of this system may be monitored and recorded for
+administrative and security reasons in accordance with local law. If such monitoring and/or recording
+reveal possible evidence of criminal activity, the results of such monitoring may be provided to law
+enforcement officials. Continued use of this system after receipt of this notice constitutes consent to
+such security monitoring and recording.
+********************************* WARNING ****************************************
+#
+!
+no banner exec
+banner exec #
+WARNING NOTICE: This is a private system for use by Kenvue and its affiliates.
+If you are not an authorized user of this system disconnect immediately.
+#
+
+!!!!Clock
+clock timezone GMT 0
+ntp server 10.255.255.230 prefer
+ntp server 10.255.255.250
+ntp source vlan{{ switch.mgmt_vlan }}
+!
+
+!-SNMP
+!-Insert SNMP Configuration from 
+!-https://confluence.jnj.com/display/AAVU/SNMP+Platform+Specific+Template
+!-Template > .XLSX Sheet Tab "Routers and Switches" > "IOS and IOS-XE L2 Switch"
+!
+ip access-list standard SNMP-RO-ACL  
+ remark NCHC NA Tools
+ permit 10.79.62.0 0.0.0.255
+ remark NCHC EMEA Tools
+ permit 10.185.62.0 0.0.0.255
+ remark NCHC ASPAC Tools
+ permit 10.225.62.0 0.0.0.255
+ remark NCHC DNAC-NA
+ permit 10.63.7.0 0.0.0.31
+ remark NCHC DNAC-EU
+ permit 10.149.7.0 0.0.0.31  
+ remark NCHC DNAC-AP
+ permit 10.199.135.0 0.0.0.31
+ remark Netscout Collectors
+ permit 10.79.4.50 0.0.0.0
+ permit 10.79.4.51 0.0.0.0
+ permit 10.79.4.151 0.0.0.0
+ permit 10.185.4.51 0.0.0.0
+ permit 10.185.4.151 0.0.0.0
+ permit 10.225.4.51 0.0.0.0
+ permit 10.225.4.151 0.0.0.0
+ remark For Magellan Servers
+ permit 10.79.23.0 0.0.0.255
+ permit 10.79.153.0 0.0.0.255
+ permit 10.185.18.0 0.0.0.255
+ permit 10.185.152.0 0.0.0.255
+ permit 10.225.5.0 0.0.0.255
+ permit 10.225.152.0 0.0.0.255
+!
+snmp-server ifindex persist
+no snmp-server community public
+no snmp-server community private
+snmp-server community  RO SNMP-RO-ACL
+snmp-server contact Kenvue NOC
+snmp-server location {{switch.snmp_location}}
+!
+
+!-Logging 
+no logging console
+logging buffered 10000 informational
+logging trap notifications
+logging facility local7
+logging source-interface vlan {{ switch.mgmt_vlan }}
+logging source-interface vlan {{ switch.mgmt_vlan }}
+logging 10.79.62.202
+logging 10.225.62.200
+
+!
+!-Console and VTY Ports
+line con 0
+ password $!
+ login local
+ exec-timeout 5 0
+!
+line vty 0 4
+ password $!
+ login local
+ exec-timeout 5 0
+ transport input SSH
+!
+line vty 5 15
+ no login
+ transport input none
+!
+!-TACACS
+aaa new-model
+!
+ip tacacs source-interface vlan {{ switch.mgmt_vlan }}
+!
+!
+tacacs server REGIONAL-TACACS-1
+ address ipv4 10.225.46.10
+ key 
+ timeout 10
+tacacs server REGIONAL-TACACS-2
+ address ipv4 10.185.46.10
+ key 
+ timeout 10
+tacacs server REGIONAL-TACACS-3
+ address ipv4 10.79.46.10
+ key 
+ timeout 10
+!
+!
+aaa authentication login default group tacacs+ local
+aaa authorization exec default group tacacs+ if-authenticated 
+aaa authorization commands 1 default group tacacs+ 
+aaa authorization commands 15 default group tacacs+ none 
+aaa accounting commands 15 default stop-only group tacacs+
+aaa session-id common
+!
+!-END
+end
+write mem
