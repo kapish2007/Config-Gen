@@ -38,6 +38,8 @@ def build_template(
                 hostname = row["hostname"]
                 if hostname not in hostname_data:
                     hostname_data[hostname] = {"hostname": hostname, "vlans": [], "etherchannels": [], "interfaces": []}
+                if key not in hostname_data[hostname]:
+                    hostname_data[hostname][key] = []
                 hostname_data[hostname][key].append(row)
 
     # Load each CSV based on its type
